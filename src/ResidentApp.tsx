@@ -26,6 +26,7 @@ import {
   NavLink,
   Route,
   Routes,
+  useLocation,
   useNavigate,
   useParams,
 } from 'react-router-dom'
@@ -47,11 +48,65 @@ const selectedDoorStorageKey = 'timbre-selected-door-id'
 
 type ResidentDoor = Door & { membership_role: 'owner' | 'resident' }
 
+async function getInvitationErrorDetails(error: unknown) {
+  let code = ''
+  if (
+    typeof error === 'object'
+    && error !== null
+    && 'context' in error
+    && error.context instanceof Response
+  ) {
+    try {
+      const responseBody: unknown = await error.context.clone().json()
+      if (
+        typeof responseBody === 'object'
+        && responseBody !== null
+        && 'error' in responseBody
+        && typeof responseBody.error === 'string'
+      ) {
+        code = responseBody.error
+      }
+    } catch (responseError) {
+      console.error('No se pudo leer el detalle de error de la invitación:', responseError)
+    }
+  }
+
+  if (code === 'invite_invalid_or_expired') {
+    return {
+      code,
+      message: 'El enlace venció o ya se usó. Pedí al propietario que genere una nueva invitación.',
+    }
+  }
+  if (code === 'invite_email_mismatch') {
+    return {
+      code,
+      message: 'Esta invitación es para otro correo. Cerrá sesión, entrá con el correo al que se envió y volvé a abrir el enlace.',
+    }
+  }
+  if (code === 'invite_accept_failed') {
+    return {
+      code,
+      message: 'El servidor no pudo registrar la invitación. Volvé a abrir el enlace; si el problema continúa, pedí que cancelen la invitación y generen una nueva.',
+    }
+  }
+  if (code === 'unauthorized') {
+    return {
+      code,
+      message: 'Tu sesión venció. Iniciá sesión con el correo invitado y abrí nuevamente el enlace.',
+    }
+  }
+  return {
+    code,
+    message: code ? `No se pudo aceptar la invitación (código: ${code}).` : getErrorMessage(error),
+  }
+}
+
 function ResidentApp() {
+  const location = useLocation()
   const navigate = useNavigate()
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured)
-  const inviteProcessing = useRef(false)
+  const inviteProcessing = useRef('')
 
   useEffect(() => {
     if (!supabase) return
@@ -71,27 +126,32 @@ function ResidentApp() {
   }, [])
 
   useEffect(() => {
-    if (!authReady || !session || !supabase || inviteProcessing.current) return
+    if (!authReady || !session || !supabase) return
     const token = sessionStorage.getItem('timbre-pending-door-invite')
     if (!token) return
-    inviteProcessing.current = true
+    const processingKey = `${session.user.id}:${token}`
+    if (inviteProcessing.current === processingKey) return
+    inviteProcessing.current = processingKey
     void supabase.functions.invoke('door-members', { body: { action: 'accept', token } })
-      .then(({ data, error }) => {
-        sessionStorage.removeItem('timbre-pending-door-invite')
+      .then(async ({ data, error }) => {
         if (error) {
-          localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${error.message}`)
+          const details = await getInvitationErrorDetails(error)
+          if (details.code !== 'invite_email_mismatch') {
+            sessionStorage.removeItem('timbre-pending-door-invite')
+          }
+          localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${details.message}`)
         } else {
+          sessionStorage.removeItem('timbre-pending-door-invite')
           if (typeof data?.door_id === 'string') localStorage.setItem(selectedDoorStorageKey, data.door_id)
           localStorage.setItem('timbre-invite-result', 'Invitación aceptada. Ya podés entrar a la puerta compartida.')
         }
         navigate('/panel/ajustes', { replace: true })
       })
       .catch((inviteError: unknown) => {
-        inviteProcessing.current = false
         localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${getErrorMessage(inviteError)}`)
         navigate('/panel/ajustes', { replace: true })
       })
-  }, [authReady, navigate, session])
+  }, [authReady, location.pathname, navigate, session])
 
   if (!authReady) return <LoadingScreen />
 
@@ -219,36 +279,16 @@ function useResidentData(userId: string | undefined) {
 function InvitationPage({ session }: { session: Session | null }) {
   const { token = '' } = useParams()
   const navigate = useNavigate()
-  const processing = useRef(false)
 
   useEffect(() => {
     if (!/^[a-f0-9]{64}$/i.test(token)) {
+      sessionStorage.removeItem('timbre-pending-door-invite')
       localStorage.setItem('timbre-invite-result', 'Este enlace de invitación no es válido.')
       navigate(session ? '/panel/ajustes' : '/login', { replace: true })
       return
     }
-    if (!session) {
-      sessionStorage.setItem('timbre-pending-door-invite', token)
-      navigate('/login', { replace: true })
-      return
-    }
-    if (!supabase) return
-    if (processing.current) return
-    processing.current = true
-    void supabase.functions.invoke('door-members', { body: { action: 'accept', token } })
-      .then(({ data, error }) => {
-        if (error) {
-          localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${error.message}`)
-        } else {
-          if (typeof data?.door_id === 'string') localStorage.setItem(selectedDoorStorageKey, data.door_id)
-          localStorage.setItem('timbre-invite-result', 'Invitación aceptada. Ya podés entrar a la puerta compartida.')
-        }
-        navigate('/panel/ajustes', { replace: true })
-      })
-      .catch((inviteError: unknown) => {
-        localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${getErrorMessage(inviteError)}`)
-        navigate('/panel/ajustes', { replace: true })
-      })
+    sessionStorage.setItem('timbre-pending-door-invite', token)
+    navigate(session ? '/panel/ajustes' : '/login', { replace: true })
   }, [navigate, session, token])
 
   return <LoadingScreen />
@@ -920,7 +960,8 @@ function DoorCollaboration({
     })
     setBusy(false)
     if (acceptError) {
-      setError(`No se pudo aceptar la invitación: ${acceptError.message}`)
+      const details = await getInvitationErrorDetails(acceptError)
+      setError(`No se pudo aceptar la invitación: ${details.message}`)
       return
     }
     setInviteToken('')

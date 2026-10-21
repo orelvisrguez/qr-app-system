@@ -47,6 +47,9 @@ Deno.serve(async (request) => {
     if (acceptError?.message.includes('invite_invalid_or_expired')) {
       return jsonResponse({ error: 'invite_invalid_or_expired' }, 403, origin)
     }
+    if (acceptError?.message.includes('invite_email_mismatch')) {
+      return jsonResponse({ error: 'invite_email_mismatch' }, 403, origin)
+    }
     if (acceptError || typeof doorId !== 'string') {
       console.error('Could not accept door invitation:', acceptError?.message ?? 'missing_door_id')
       return jsonResponse({ error: 'invite_accept_failed' }, 500, origin)
