@@ -15,3 +15,15 @@ verify_jwt = false
 
 [functions.push-subscription]
 verify_jwt = false
+
+[functions.door-members]
+verify_jwt = false
+
+[functions.door-call-signal]
+verify_jwt = false
+
+[functions.visitor-photo-url]
+verify_jwt = false
+
+[functions.cleanup-media]
+verify_jwt = false

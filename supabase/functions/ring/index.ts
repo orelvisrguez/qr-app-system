@@ -65,6 +65,7 @@ Deno.serve(async (request) => {
     reason?: unknown
     device_id?: unknown
     turnstile_token?: unknown
+    visitor_photo_base64?: unknown
   }
   try {
     body = await request.json()
@@ -82,6 +83,11 @@ Deno.serve(async (request) => {
     || typeof body.turnstile_token !== 'string'
     || body.turnstile_token.length < 10
     || body.turnstile_token.length > 2048
+    || (body.visitor_photo_base64 !== undefined
+      && body.visitor_photo_base64 !== null
+      && (typeof body.visitor_photo_base64 !== 'string'
+        || body.visitor_photo_base64.length > 2_800_000
+        || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(body.visitor_photo_base64)))
     || (body.visitor_name !== null && body.visitor_name !== undefined && typeof body.visitor_name !== 'string')
   ) {
     return jsonResponse({ error: 'invalid_request' }, 400, origin)
@@ -125,6 +131,18 @@ Deno.serve(async (request) => {
   const cleanName = typeof body.visitor_name === 'string'
     ? body.visitor_name.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) || null
     : null
+  let visitorPhotoBytes: Uint8Array | null = null
+  if (typeof body.visitor_photo_base64 === 'string') {
+    visitorPhotoBytes = Uint8Array.from(atob(body.visitor_photo_base64), (character) => character.charCodeAt(0))
+    if (
+      visitorPhotoBytes.length > 2 * 1024 * 1024
+      || visitorPhotoBytes[0] !== 0xff
+      || visitorPhotoBytes[1] !== 0xd8
+      || visitorPhotoBytes[2] !== 0xff
+    ) {
+      return jsonResponse({ error: 'invalid_photo' }, 400, origin)
+    }
+  }
 
   const supabase = createClient(url, serviceRoleKey, { auth: { persistSession: false } })
   const { data: eventId, error } = await supabase.rpc('create_ring', {
@@ -143,6 +161,29 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: 'ring_failed' }, 500, origin)
   }
 
+  let photoSaved = body.visitor_photo_base64 === undefined || body.visitor_photo_base64 === null
+  if (visitorPhotoBytes) {
+    const photoPath = `${eventId}/visitor.jpg`
+    const { error: uploadError } = await supabase.storage
+      .from('visitor-photos')
+      .upload(photoPath, visitorPhotoBytes, { contentType: 'image/jpeg', upsert: false })
+    if (uploadError) {
+      console.error('Ring event was created, but visitor photo upload failed:', uploadError.message)
+    } else {
+      const { error: photoUpdateError } = await supabase
+        .from('ring_events')
+        .update({ visitor_photo_path: photoPath })
+        .eq('id', eventId)
+      if (photoUpdateError) {
+        console.error('Visitor photo was uploaded but could not be linked:', photoUpdateError.message)
+        const { error: cleanupError } = await supabase.storage.from('visitor-photos').remove([photoPath])
+        if (cleanupError) console.error('Could not remove unlinked visitor photo:', cleanupError.message)
+      } else {
+        photoSaved = true
+      }
+    }
+  }
+
   const { data: door, error: doorError } = await supabase
     .from('doors')
     .select('id, owner_id, dnd_enabled, dnd_start, dnd_end, quick_replies')
@@ -154,21 +195,25 @@ Deno.serve(async (request) => {
   }
 
   const { data: profile, error: profileError } = await supabase
+    .from('door_members')
+    .select('profile_id')
+    .eq('door_id', door.id)
+  const recipientIds = [...new Set([door.owner_id, ...(profile ?? []).map((member) => member.profile_id)])]
+  const { data: recipientProfiles, error: recipientError } = await supabase
     .from('profiles')
-    .select('telegram_chat_id')
-    .eq('id', door.owner_id)
-    .maybeSingle()
+    .select('id, telegram_chat_id')
+    .in('id', recipientIds)
   const { data: pushSubscriptions, error: pushError } = await supabase
     .from('push_subscriptions')
     .select('endpoint, p256dh, auth')
-    .eq('profile_id', door.owner_id)
+    .in('profile_id', recipientIds)
   const telegramToken = Deno.env.get('TELEGRAM_BOT_TOKEN')
   const visitorLabel = cleanName || 'Alguien'
   const quiet = door.dnd_enabled && isWithinQuietHours(door.dnd_start, door.dnd_end)
   let notificationSent = false
-  if (profileError) {
-    console.error('Ring event was created, but Telegram settings could not be loaded:', profileError.message)
-  } else if (profile?.telegram_chat_id && telegramToken) {
+  if (profileError || recipientError) {
+    console.error('Ring event was created, but resident notification settings could not be loaded:', profileError?.message ?? recipientError?.message)
+  } else if (telegramToken) {
     const replies = Array.isArray(door.quick_replies)
       ? door.quick_replies.filter((reply: unknown): reply is string => typeof reply === 'string' && reply.trim().length > 0).slice(0, 4)
       : []
@@ -177,22 +222,24 @@ Deno.serve(async (request) => {
       callback_data: `answer:${eventId}:${index}`,
     }])
     try {
-      const telegramResponse = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: profile.telegram_chat_id,
-          text: `🔔 Timbre — ${visitorLabel} (${body.reason}) · ${new Intl.DateTimeFormat('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date())}`,
-          disable_notification: quiet,
-          reply_markup: { inline_keyboard: keyboard },
-        }),
-      })
-      const result = await telegramResponse.json() as { ok?: boolean; description?: string }
-      if (!telegramResponse.ok || !result.ok) {
-        console.error('Telegram notification failed:', result.description ?? `HTTP ${telegramResponse.status}`)
-      } else {
-        notificationSent = true
-      }
+      await Promise.all((recipientProfiles ?? []).filter((resident) => resident.telegram_chat_id).map(async (resident) => {
+        const telegramResponse = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: resident.telegram_chat_id,
+            text: `🔔 Timbre — ${visitorLabel} (${body.reason}) · ${new Intl.DateTimeFormat('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date())}`,
+            disable_notification: quiet,
+            reply_markup: { inline_keyboard: keyboard },
+          }),
+        })
+        const result = await telegramResponse.json() as { ok?: boolean; description?: string }
+        if (!telegramResponse.ok || !result.ok) {
+          console.error('Telegram notification failed:', result.description ?? `HTTP ${telegramResponse.status}`)
+        } else {
+          notificationSent = true
+        }
+      }))
     } catch (notificationError) {
       console.error('Telegram notification failed:', notificationError)
     }
@@ -236,8 +283,7 @@ Deno.serve(async (request) => {
             const { error: removeError } = await supabase
               .from('push_subscriptions')
               .delete()
-              .eq('endpoint', subscription.endpoint)
-              .eq('profile_id', door.owner_id)
+                .eq('endpoint', subscription.endpoint)
             if (removeError) console.error('Could not remove expired web push subscription:', removeError.message)
           }
         }
@@ -245,5 +291,5 @@ Deno.serve(async (request) => {
     }
   }
 
-  return jsonResponse({ event_id: eventId, notification_sent: notificationSent }, 200, origin)
+  return jsonResponse({ event_id: eventId, notification_sent: notificationSent, photo_saved: photoSaved }, 200, origin)
 })

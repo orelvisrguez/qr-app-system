@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bell,
   BellOff,
@@ -11,6 +11,7 @@ import {
   House,
   LogOut,
   Menu,
+  Phone,
   QrCode,
   Settings,
   ShieldCheck,
@@ -38,13 +39,19 @@ import {
   type RingEvent,
 } from './lib/supabase'
 import { decodeVapidPublicKey, getPushPublicKey, isPushSupported } from './lib/push'
+import { CallSession } from './components/CallSession'
 
 const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY
 const TurnstileWidget = lazy(() => import('@marsidev/react-turnstile').then(({ Turnstile }) => ({ default: Turnstile })))
+const selectedDoorStorageKey = 'timbre-selected-door-id'
+
+type ResidentDoor = Door & { membership_role: 'owner' | 'resident' }
 
 function ResidentApp() {
+  const navigate = useNavigate()
   const [session, setSession] = useState<Session | null>(null)
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured)
+  const inviteProcessing = useRef(false)
 
   useEffect(() => {
     if (!supabase) return
@@ -63,6 +70,29 @@ function ResidentApp() {
     return () => listener.subscription.unsubscribe()
   }, [])
 
+  useEffect(() => {
+    if (!authReady || !session || !supabase || inviteProcessing.current) return
+    const token = sessionStorage.getItem('timbre-pending-door-invite')
+    if (!token) return
+    inviteProcessing.current = true
+    void supabase.functions.invoke('door-members', { body: { action: 'accept', token } })
+      .then(({ data, error }) => {
+        sessionStorage.removeItem('timbre-pending-door-invite')
+        if (error) {
+          localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${error.message}`)
+        } else {
+          if (typeof data?.door_id === 'string') localStorage.setItem(selectedDoorStorageKey, data.door_id)
+          localStorage.setItem('timbre-invite-result', 'Invitación aceptada. Ya podés entrar a la puerta compartida.')
+        }
+        navigate('/panel/ajustes', { replace: true })
+      })
+      .catch((inviteError: unknown) => {
+        inviteProcessing.current = false
+        localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${getErrorMessage(inviteError)}`)
+        navigate('/panel/ajustes', { replace: true })
+      })
+  }, [authReady, navigate, session])
+
   if (!authReady) return <LoadingScreen />
 
   return (
@@ -74,6 +104,7 @@ function ResidentApp() {
       <Route path="/panel/historial" element={session ? <HistoryPage /> : <Navigate to="/login" replace />} />
       <Route path="/panel/ajustes" element={session ? <SettingsPage /> : <Navigate to="/login" replace />} />
       <Route path="/panel/qr" element={session ? <QrPage /> : <Navigate to="/login" replace />} />
+      <Route path="/invitacion/:token" element={<InvitationPage session={session} />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   )
@@ -81,29 +112,54 @@ function ResidentApp() {
 
 function useResidentData(userId: string | undefined) {
   const [door, setDoor] = useState<Door | null>(null)
+  const [doors, setDoors] = useState<ResidentDoor[]>([])
+  const [membershipRole, setMembershipRole] = useState<'owner' | 'resident' | null>(null)
+  const [selectedDoorId, setSelectedDoorId] = useState(() => localStorage.getItem(selectedDoorStorageKey) ?? '')
   const [events, setEvents] = useState<RingEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const reload = useCallback(async () => {
     if (!supabase || !userId) {
+      setDoors([])
+      setDoor(null)
+      setEvents([])
       setLoading(false)
       return
     }
     setError('')
-    const { data: doorRow, error: doorError } = await supabase
-      .from('doors')
-      .select('*')
-      .eq('owner_id', userId)
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from('door_members')
+      .select('role, door_id')
+      .eq('profile_id', userId)
       .order('created_at')
-      .limit(1)
-      .maybeSingle()
-    if (doorError) {
-      setError(doorError.message)
+    if (membershipError) {
+      setError(membershipError.message)
       setLoading(false)
       return
     }
+    const doorIds = (membershipRows ?? []).map((row) => row.door_id)
+    const { data: doorRows, error: doorsError } = doorIds.length
+      ? await supabase.from('doors').select('*').in('id', doorIds).order('created_at')
+      : { data: [], error: null }
+    if (doorsError) {
+      setError(doorsError.message)
+      setLoading(false)
+      return
+    }
+    const roleByDoorId = new Map((membershipRows ?? []).map((row) => [row.door_id, row.role]))
+    const availableDoors = (doorRows ?? []).map((doorRow) => ({
+      ...(doorRow as Door),
+      membership_role: roleByDoorId.get(doorRow.id) as 'owner' | 'resident',
+    }))
+    setDoors(availableDoors)
+    const doorRow = availableDoors.find((item) => item.id === selectedDoorId) ?? availableDoors[0] ?? null
+    if (doorRow && doorRow.id !== selectedDoorId) {
+      setSelectedDoorId(doorRow.id)
+      localStorage.setItem(selectedDoorStorageKey, doorRow.id)
+    }
     setDoor(doorRow as Door | null)
+    setMembershipRole(doorRow?.membership_role ?? null)
 
     if (!doorRow) {
       setEvents([])
@@ -115,7 +171,7 @@ function useResidentData(userId: string | undefined) {
     cutoff.setDate(cutoff.getDate() - 30)
     const { data: eventRows, error: eventError } = await supabase
       .from('ring_events')
-      .select('id, door_id, visitor_name, reason, status, response_text, created_at, responded_at')
+      .select('id, door_id, visitor_name, reason, status, response_text, created_at, responded_at, visitor_photo_path, call_requested')
       .eq('door_id', doorRow.id)
       .gte('created_at', cutoff.toISOString())
       .order('created_at', { ascending: false })
@@ -126,7 +182,7 @@ function useResidentData(userId: string | undefined) {
       setEvents((eventRows ?? []) as RingEvent[])
     }
     setLoading(false)
-  }, [userId])
+  }, [selectedDoorId, userId])
 
   useEffect(() => {
     setLoading(true)
@@ -152,7 +208,50 @@ function useResidentData(userId: string | undefined) {
     }
   }, [door, reload])
 
-  return { door, events, loading, error, reload, setDoor, setEvents }
+  const selectDoor = useCallback((id: string) => {
+    setSelectedDoorId(id)
+    localStorage.setItem(selectedDoorStorageKey, id)
+  }, [])
+
+  return { door, doors, membershipRole, selectedDoorId, selectDoor, events, loading, error, reload, setDoor, setEvents }
+}
+
+function InvitationPage({ session }: { session: Session | null }) {
+  const { token = '' } = useParams()
+  const navigate = useNavigate()
+  const processing = useRef(false)
+
+  useEffect(() => {
+    if (!/^[a-f0-9]{64}$/i.test(token)) {
+      localStorage.setItem('timbre-invite-result', 'Este enlace de invitación no es válido.')
+      navigate(session ? '/panel/ajustes' : '/login', { replace: true })
+      return
+    }
+    if (!session) {
+      sessionStorage.setItem('timbre-pending-door-invite', token)
+      navigate('/login', { replace: true })
+      return
+    }
+    if (!supabase) return
+    if (processing.current) return
+    processing.current = true
+    void supabase.functions.invoke('door-members', { body: { action: 'accept', token } })
+      .then(({ data, error }) => {
+        if (error) {
+          localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${error.message}`)
+        } else {
+          if (typeof data?.door_id === 'string') localStorage.setItem(selectedDoorStorageKey, data.door_id)
+          localStorage.setItem('timbre-invite-result', 'Invitación aceptada. Ya podés entrar a la puerta compartida.')
+        }
+        navigate('/panel/ajustes', { replace: true })
+      })
+      .catch((inviteError: unknown) => {
+        localStorage.setItem('timbre-invite-result', `No se pudo aceptar la invitación: ${getErrorMessage(inviteError)}`)
+        navigate('/panel/ajustes', { replace: true })
+      })
+  }, [navigate, session, token])
+
+  return <LoadingScreen />
 }
 
 function LandingPage() {
@@ -271,7 +370,23 @@ function GoogleMark() {
   return <svg aria-hidden="true" viewBox="0 0 48 48" className="google-mark"><path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11a9.4 9.4 0 0 1-4.1 6.2v5.1h6.6c3.9-3.6 6.1-8.8 6.1-15Z" /><path fill="#34A853" d="M24 44c5.5 0 10.1-1.8 13.5-4.8l-6.6-5.1c-1.8 1.2-4.1 2-6.9 2-5.3 0-9.8-3.6-11.4-8.4H5.8v5.3A20 20 0 0 0 24 44Z" /><path fill="#FBBC05" d="M12.6 27.7a12 12 0 0 1 0-7.5v-5.3H5.8a20 20 0 0 0 0 18.1l6.8-5.3Z" /><path fill="#EA4335" d="M24 11.8c3 0 5.7 1 7.8 3.1l5.9-5.9C34.1 5.7 29.5 4 24 4A20 20 0 0 0 5.8 14.9l6.8 5.3c1.6-4.8 6.1-8.4 11.4-8.4Z" /></svg>
 }
 
-function ResidentLayout({ children, active, userId, onSignOut }: { children: React.ReactNode; active: string; userId: string; onSignOut: () => void }) {
+function ResidentLayout({
+  children,
+  active,
+  userId,
+  onSignOut,
+  doors = [],
+  selectedDoorId,
+  onSelectDoor,
+}: {
+  children: React.ReactNode
+  active: string
+  userId: string
+  onSignOut: () => void
+  doors?: ResidentDoor[]
+  selectedDoorId?: string
+  onSelectDoor?: (id: string) => void
+}) {
   const [menuOpen, setMenuOpen] = useState(false)
   const links = [
     { to: '/panel', title: 'Inicio', icon: House, end: true },
@@ -283,7 +398,8 @@ function ResidentLayout({ children, active, userId, onSignOut }: { children: Rea
     <div className="app-shell">
       <aside className={`sidebar ${menuOpen ? 'sidebar-open' : ''}`}>
         <Link className="sidebar-brand" to="/panel"><Logo /></Link>
-        <div className="sidebar-door"><span className="door-avatar"><DoorOpen size={17} /></span><span><small>MI PUERTA</small><strong>Mi timbre</strong></span><span className="door-status-dot" /></div>
+        {doors.length > 1 && <label className="sidebar-door-select"><span>PUERTAS COMPARTIDAS</span><select value={selectedDoorId} onChange={(event) => onSelectDoor?.(event.target.value)} aria-label="Elegir puerta">{doors.map((door) => <option key={door.id} value={door.id}>{door.name}</option>)}</select></label>}
+        <div className="sidebar-door"><span className="door-avatar"><DoorOpen size={17} /></span><span><small>MI PUERTA</small><strong>{doors.find((door) => door.id === selectedDoorId)?.name ?? 'Mi timbre'}</strong></span><span className="door-status-dot" /></div>
         <span className="nav-caption">MENÚ</span>
         <nav className="side-nav">
           {links.map(({ to, title, icon: Icon, end }) => <NavLink key={to} to={to} end={end} onClick={() => setMenuOpen(false)} className={({ isActive }) => `side-link ${isActive ? 'side-link-active' : ''}`}><Icon size={18} strokeWidth={1.8} /><span>{title}</span>{title === 'Mi QR' && <span className="nav-arrow"><ExternalLink size={13} /></span>}</NavLink>)}
@@ -330,7 +446,7 @@ function DashboardPage() {
   const userId = useUserId()
   const signOut = useSignOut()
   const data = useResidentData(userId)
-  return <ResidentLayout active="Inicio" userId={userId ?? '?'} onSignOut={() => void signOut()}><DashboardContent {...data} /></ResidentLayout>
+  return <ResidentLayout active="Inicio" userId={userId ?? '?'} onSignOut={() => void signOut()} doors={data.doors} selectedDoorId={data.selectedDoorId} onSelectDoor={data.selectDoor}><DashboardContent {...data} /></ResidentLayout>
 }
 
 function DashboardContent({ door, events, loading, error, reload, setEvents }: ReturnType<typeof useResidentData>) {
@@ -379,7 +495,71 @@ function StatCard({ icon, label, value, note, alert = false }: { icon: React.Rea
 function EventCard({ event, door, onRespond }: { event: RingEvent; door: Door; onRespond: (event: RingEvent, response: string) => void }) {
   const isPending = event.status === 'pending'
   const visitor = event.visitor_name?.trim() || 'Alguien'
-  return <article className={`event-card ${isPending ? 'event-pending' : ''}`}><div className={`event-icon ${isPending ? 'event-icon-pending' : ''}`}><Bell size={17} /></div><div className="event-main"><div className="event-title-row"><strong>{visitor} llegó</strong><span className="event-time">{formatTime(event.created_at)}</span></div><div className="event-meta"><span>{event.reason || 'Visita'}</span><i />{formatDate(event.created_at)}</div>{event.status === 'answered' && event.response_text && <div className="event-response"><Check size={13} /> Respondiste: “{event.response_text}”</div>}{isPending && <div className="quick-actions">{(door.quick_replies?.length ? door.quick_replies : defaultReplies).map((reply) => <button key={reply} onClick={() => onRespond(event, reply)}>{reply}</button>)}</div>}</div>{isPending && <span className="pending-pill">Esperando</span>}</article>
+  return <article className={`event-card ${isPending ? 'event-pending' : ''}`}><div className={`event-icon ${isPending ? 'event-icon-pending' : ''}`}><Bell size={17} /></div><div className="event-main"><div className="event-title-row"><strong>{visitor} llegó</strong><span className="event-time">{formatTime(event.created_at)}</span></div><div className="event-meta"><span>{event.reason || 'Visita'}</span><i />{formatDate(event.created_at)}</div>{event.visitor_photo_path && <VisitorPhoto eventId={event.id} />}{event.status === 'answered' && event.response_text && <div className="event-response"><Check size={13} /> Respondiste: “{event.response_text}”</div>}{event.call_requested && event.status !== 'expired' && <IncomingCall event={event} />}{isPending && <div className="quick-actions">{(door.quick_replies?.length ? door.quick_replies : defaultReplies).map((reply) => <button key={reply} onClick={() => onRespond(event, reply)}>{reply}</button>)}</div>}</div>{isPending && <span className="pending-pill">Esperando</span>}</article>
+}
+
+function VisitorPhoto({ eventId }: { eventId: string }) {
+  const [url, setUrl] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function showPhoto() {
+    if (!supabase || busy) return
+    if (url) {
+      setUrl('')
+      return
+    }
+    setBusy(true)
+    setError('')
+    const { data, error: requestError } = await supabase.functions.invoke('visitor-photo-url', { body: { event_id: eventId } })
+    setBusy(false)
+    if (requestError) {
+      setError(`No se pudo abrir la foto: ${requestError.message}`)
+    } else if (typeof data?.url === 'string') {
+      setUrl(data.url)
+    } else {
+      setError('No se pudo abrir la foto.')
+    }
+  }
+
+  return <div className="event-visitor-photo">
+    <button className="button button-quiet button-small" onClick={() => void showPhoto()}>{busy ? 'Cargando foto…' : url ? 'Ocultar foto' : 'Ver foto del visitante'}</button>
+    {url && <img src={url} alt="Foto compartida por el visitante" />}
+    {error && <span className="inline-error" role="alert">{error}</span>}
+  </div>
+}
+
+function IncomingCall({ event }: { event: RingEvent }) {
+  const [callId, setCallId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function accept() {
+    if (!supabase || busy) return
+    setBusy(true)
+    setError('')
+    const { data: call, error: lookupError } = await supabase.functions.invoke('door-call-signal', {
+      body: { action: 'join', event_id: event.id },
+    })
+    if (lookupError || typeof call?.call_id !== 'string') {
+      setBusy(false)
+      setError(lookupError?.message ?? 'La llamada ya no está disponible.')
+      return
+    }
+    const { error: acceptError } = await supabase.functions.invoke('door-call-signal', {
+      body: { action: 'accept', call_id: call.call_id },
+    })
+    setBusy(false)
+    if (acceptError) setError(acceptError.message)
+    else setCallId(call.call_id)
+  }
+
+  if (callId) return <CallSession eventId={event.id} callId={callId} role="resident" onClose={() => setCallId('')} />
+  return <div className="incoming-call">
+    <p><Phone size={15} /> La visita solicita una llamada de audio/video.</p>
+    <button className="button button-dark button-small" disabled={busy} onClick={() => void accept()}>{busy ? 'Conectando…' : 'Atender llamada'}</button>
+    {error && <span className="inline-error" role="alert">{error}</span>}
+  </div>
 }
 
 function HistoryPage() {
@@ -388,7 +568,7 @@ function HistoryPage() {
   const data = useResidentData(userId)
   const [filter, setFilter] = useState('Todos')
   const filtered = useMemo(() => data.events.filter((event) => filter === 'Todos' || (filter === 'Respondidos' ? event.status === 'answered' : event.status === 'pending')), [data.events, filter])
-  return <ResidentLayout active="Historial" userId={userId ?? '?'} onSignOut={() => void signOut()}><div className="page-content">
+  return <ResidentLayout active="Historial" userId={userId ?? '?'} onSignOut={() => void signOut()} doors={data.doors} selectedDoorId={data.selectedDoorId} onSelectDoor={data.selectDoor}><div className="page-content">
     <PageHeading eyebrow="TU ACTIVIDAD" title="Historial" description="Todos tus avisos de los últimos 30 días." />
     {data.error && <ErrorBanner message={data.error} />}
     <div className="history-toolbar"><div className="filter-tabs">{['Todos', 'Esperando', 'Respondidos'].map((name) => <button key={name} className={filter === name ? 'filter-active' : ''} onClick={() => setFilter(name)}>{name}</button>)}</div><span className="history-count">{filtered.length} {filtered.length === 1 ? 'aviso' : 'avisos'}</span></div>
@@ -398,7 +578,7 @@ function HistoryPage() {
 }
 
 function EventHistoryRow({ event }: { event: RingEvent }) {
-  return <article className="history-row"><div className={`event-icon ${event.status === 'pending' ? 'event-icon-pending' : ''}`}><Bell size={17} /></div><div className="history-row-main"><strong>{event.visitor_name?.trim() || 'Alguien'} llegó</strong><span>{event.reason || 'Visita'}{event.response_text && ` · “${event.response_text}”`}</span></div><div className="history-row-date"><strong>{formatDate(event.created_at)}</strong><span className={`history-status ${event.status === 'answered' ? 'answered-status' : ''}`}>{event.status === 'answered' ? 'Respondido' : event.status === 'pending' ? 'Esperando' : 'Sin respuesta'}</span></div></article>
+  return <article className="history-row"><div className={`event-icon ${event.status === 'pending' ? 'event-icon-pending' : ''}`}><Bell size={17} /></div><div className="history-row-main"><strong>{event.visitor_name?.trim() || 'Alguien'} llegó</strong><span>{event.reason || 'Visita'}{event.response_text && ` · “${event.response_text}”`}</span>{event.visitor_photo_path && <VisitorPhoto eventId={event.id} />}</div><div className="history-row-date"><strong>{formatDate(event.created_at)}</strong><span className={`history-status ${event.status === 'answered' ? 'answered-status' : ''}`}>{event.status === 'answered' ? 'Respondido' : event.status === 'pending' ? 'Esperando' : 'Sin respuesta'}</span></div></article>
 }
 
 function SettingsPage() {
@@ -419,6 +599,11 @@ function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [inviteResult] = useState(() => localStorage.getItem('timbre-invite-result') ?? '')
+
+  useEffect(() => {
+    if (inviteResult) localStorage.removeItem('timbre-invite-result')
+  }, [inviteResult])
 
   useEffect(() => {
     if (!data.door) return
@@ -593,18 +778,22 @@ function SettingsPage() {
     }
   }
 
-  return <ResidentLayout active="Ajustes" userId={userId ?? '?'} onSignOut={() => void signOut()}><div className="page-content">
+  return <ResidentLayout active="Ajustes" userId={userId ?? '?'} onSignOut={() => void signOut()} doors={data.doors} selectedDoorId={data.selectedDoorId} onSelectDoor={data.selectDoor}><div className="page-content">
     <PageHeading eyebrow="PERSONALIZÁ TU TIMBRE" title="Ajustes" description="Administrá tu puerta y elegí cómo responder." />
     {data.error && <ErrorBanner message={data.error} />}
+    {inviteResult && (inviteResult.startsWith('No se pudo') || inviteResult.startsWith('Este enlace')
+      ? <ErrorBanner message={inviteResult} />
+      : <div className="success-note">{inviteResult}</div>)}
     {data.loading ? <LoadingCard /> : !data.door ? <EmptyDoor /> : <>
-      <form className="settings-form" onSubmit={(event) => void save(event)}>
+      {data.membershipRole === 'owner' ? <form className="settings-form" onSubmit={(event) => void save(event)}>
         <section className="settings-card"><div className="settings-card-heading"><div className="settings-card-icon"><DoorOpen size={18} /></div><div><h2>Tu puerta</h2><p>Esta información es solo para vos.</p></div></div><label className="field-label" htmlFor="door-name">Nombre interno</label><input className="text-input" id="door-name" maxLength={60} value={name} onChange={(event) => setName(event.target.value)} /><p className="field-hint">No se muestra a tus visitas.</p><div className="setting-toggle-row"><div><strong>Timbre activo</strong><p>Las visitas pueden avisarte desde el QR.</p></div><Toggle checked={active} onChange={setActive} label="Activar timbre" /></div></section>
         <section className="settings-card"><div className="settings-card-heading"><div className="settings-card-icon"><BellOff size={18} /></div><div><h2>No molestar</h2><p>Durante este horario se guardan avisos, sin notificaciones sonoras.</p></div></div><div className="setting-toggle-row dnd-toggle"><div><strong>Activar horario</strong><p>Usamos la hora de Buenos Aires.</p></div><Toggle checked={dndEnabled} onChange={setDndEnabled} label="Activar No molestar" /></div>{dndEnabled && <div className="time-fields"><label><span>Desde</span><input className="text-input" type="time" value={dndStart} onChange={(event) => setDndStart(event.target.value)} /></label><span className="time-separator">a</span><label><span>Hasta</span><input className="text-input" type="time" value={dndEnd} onChange={(event) => setDndEnd(event.target.value)} /></label></div>}</section>
         <section className="settings-card"><div className="settings-card-heading"><div className="settings-card-icon"><Check size={18} /></div><div><h2>Respuestas rápidas</h2><p>Las opciones que ve la persona que está en tu puerta.</p></div></div><div className="reply-inputs">{[0, 1, 2, 3].map((index) => <label key={index} className="reply-field"><span>{index + 1}</span><input className="text-input" maxLength={60} placeholder="Escribí una respuesta" value={replies[index] ?? ''} onChange={(event) => setReplies((current) => current.map((reply, item) => item === index ? event.target.value : reply).concat(current.length <= index ? [event.target.value] : []))} /><span className="character-count">{(replies[index] ?? '').length}/60</span></label>)}</div></section>
         <section className="settings-card slug-settings"><div className="settings-card-heading"><div className="settings-card-icon"><QrCode size={18} /></div><div><h2>Enlace de tu puerta</h2><p>Tu QR abre este enlace público y anónimo.</p></div></div><div className="slug-row"><code>/t/{data.door.slug}</code><button type="button" className="button button-quiet button-small" onClick={() => void regenerateSlug()}>Regenerar QR</button></div><p className="field-hint">Al regenerarlo, el enlace y el QR anteriores dejan de funcionar.</p></section>
         {error && <ErrorBanner message={error} />}{saved && <div className="success-note"><Check size={16} /> Ajustes guardados.</div>}
         <div className="settings-actions"><button className="button button-dark" type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar cambios'} <Check size={17} /></button></div>
-      </form>
+      </form> : <div className="success-note">Solo quien creó esta puerta puede modificar sus ajustes. Podés recibir avisos y responder como residente.</div>}
+      <DoorCollaboration door={data.door} role={data.membershipRole ?? 'resident'} doors={data.doors} userId={userId ?? ''} onRefresh={data.reload} onSelectDoor={data.selectDoor} />
       <section className="settings-card channel-card"><div className="settings-card-heading"><div className="settings-card-icon"><Smartphone size={18} /></div><div><h2>Notificaciones</h2><p>Vinculá canales para enterarte más rápido.</p></div></div><div className="channel-row"><span className="channel-symbol telegram-symbol">✈</span><div><strong>Telegram</strong><p>{telegramChatId ? 'Este chat recibe avisos y permite responder.' : 'Vinculá el bot para recibir avisos y responder.'}</p></div>{telegramChatId ? <button className="channel-action" disabled={telegramBusy} onClick={() => void disconnectTelegram()}>{telegramBusy ? '…' : 'Desconectar'}</button> : <button className="channel-action" disabled={telegramBusy} onClick={() => void connectTelegram()}>{telegramBusy ? 'Preparando…' : 'Vincular'}</button>}</div>{telegramLink && <div className="telegram-link-note"><span>El enlace vence en 10 minutos. Abrilo y tocá <strong>Iniciar</strong> en Telegram.</span><a className="button button-quiet button-small" href={telegramLink} target="_blank" rel="noreferrer">Abrir Telegram <ExternalLink size={13} /></a></div>}<div className="channel-row"><span className="channel-symbol push-symbol"><Bell size={17} /></span><div><strong>Notificaciones web</strong><p>{pushStatus === 'enabled' ? 'Este dispositivo recibirá avisos de tu timbre.' : pushStatus === 'denied' ? 'El navegador bloqueó los avisos. Permitilos desde los ajustes del sitio.' : pushStatus === 'unsupported' ? 'Usá un navegador compatible y, en iPhone, instalá Timbre en la pantalla de inicio.' : pushStatus === 'unconfigured' ? 'Las notificaciones web aún no están configuradas para este despliegue.' : 'Recibí avisos aunque no tengas abierto el panel.'}</p></div><button className="channel-action" disabled={pushBusy || pushStatus === 'loading' || pushStatus === 'unsupported' || pushStatus === 'unconfigured'} onClick={() => void toggleWebPush()}>{pushBusy ? '…' : pushStatus === 'enabled' ? 'Desactivar' : pushStatus === 'denied' ? 'Bloqueadas' : pushStatus === 'unsupported' ? 'No disponible' : pushStatus === 'unconfigured' ? 'No disponible' : 'Activar'}</button></div><InstallGuide /></section>
     </>}
   </div></ResidentLayout>
@@ -617,6 +806,152 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (che
 function InstallGuide() {
   const [open, setOpen] = useState(false)
   return <div className="install-guide"><button type="button" onClick={() => setOpen(!open)} aria-expanded={open}><Smartphone size={16} /> ¿Cómo instalar en iPhone? <ChevronRight className={open ? 'rotate-icon' : ''} size={15} /></button>{open && <ol><li>Abrí esta página en Safari.</li><li>Tocá el botón <strong>Compartir</strong> (el cuadrado con flecha).</li><li>Elegí <strong>“Agregar a pantalla de inicio”</strong>.</li><li>Abrí Timbre desde el nuevo ícono.</li></ol>}</div>
+}
+
+function DoorCollaboration({
+  door,
+  role,
+  doors,
+  userId,
+  onRefresh,
+  onSelectDoor,
+}: {
+  door: Door
+  role: 'owner' | 'resident'
+  doors: ResidentDoor[]
+  userId: string
+  onRefresh: () => Promise<void>
+  onSelectDoor: (id: string) => void
+}) {
+  const [email, setEmail] = useState('')
+  const [newDoorName, setNewDoorName] = useState('')
+  const [inviteToken, setInviteToken] = useState('')
+  const [inviteUrl, setInviteUrl] = useState('')
+  const [members, setMembers] = useState<Array<{ profile_id: string; role: string; email: string | null }>>([])
+  const [invites, setInvites] = useState<Array<{ id: string; email: string; expires_at: string }>>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const loadMembers = useCallback(async () => {
+    if (!supabase) return
+    const { data, error: listError } = await supabase.functions.invoke('door-members', {
+      body: { action: 'list', door_id: door.id },
+    })
+    if (listError) {
+      setError(listError.message)
+      return
+    }
+    setMembers(data?.members ?? [])
+    setInvites(data?.invites ?? [])
+  }, [door.id])
+
+  useEffect(() => { void loadMembers() }, [loadMembers])
+
+  async function createDoor() {
+    if (!supabase || !userId || !newDoorName.trim()) return
+    setBusy(true)
+    setError('')
+    const alphabet = '23456789abcdefghjkmnpqrstuvwxyz'
+    const bytes = crypto.getRandomValues(new Uint8Array(10))
+    const slug = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('')
+    const { data, error: createError } = await supabase.from('doors')
+      .insert({ owner_id: userId, name: newDoorName.trim(), slug })
+      .select('id')
+      .single()
+    setBusy(false)
+    if (createError) {
+      setError(`No pudimos crear la puerta: ${createError.message}`)
+      return
+    }
+    setNewDoorName('')
+    await onRefresh()
+    onSelectDoor(data.id)
+  }
+
+  async function createInvite(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || busy) return
+    setBusy(true)
+    setError('')
+    setInviteUrl('')
+    const { data, error: inviteError } = await supabase.functions.invoke('door-members', {
+      body: { action: 'invite', door_id: door.id, email },
+    })
+    setBusy(false)
+    if (inviteError) {
+      setError(`No se pudo crear la invitación: ${inviteError.message}`)
+      return
+    }
+    setEmail('')
+    setInviteUrl(typeof data?.invite?.url === 'string' ? data.invite.url : '')
+    await loadMembers()
+  }
+
+  async function revokeInvite(inviteId: string) {
+    if (!supabase) return
+    setBusy(true)
+    const { error: revokeError } = await supabase.functions.invoke('door-members', {
+      body: { action: 'revoke-invite', door_id: door.id, invite_id: inviteId },
+    })
+    setBusy(false)
+    if (revokeError) setError(`No se pudo cancelar la invitación: ${revokeError.message}`)
+    else await loadMembers()
+  }
+
+  async function removeMember(profileId: string) {
+    if (!supabase || !window.confirm('¿Querés quitar este residente de la puerta?')) return
+    setBusy(true)
+    const { error: removeError } = await supabase.functions.invoke('door-members', {
+      body: { action: 'remove-member', door_id: door.id, profile_id: profileId },
+    })
+    setBusy(false)
+    if (removeError) setError(`No se pudo quitar el residente: ${removeError.message}`)
+    else await loadMembers()
+  }
+
+  async function acceptInvitation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!supabase || busy) return
+    setBusy(true)
+    setError('')
+    const { data, error: acceptError } = await supabase.functions.invoke('door-members', {
+      body: { action: 'accept', token: inviteToken.trim() },
+    })
+    setBusy(false)
+    if (acceptError) {
+      setError(`No se pudo aceptar la invitación: ${acceptError.message}`)
+      return
+    }
+    setInviteToken('')
+    setNotice('Ya tenés acceso a la puerta compartida.')
+    if (typeof data?.door_id === 'string') onSelectDoor(data.door_id)
+    await onRefresh()
+  }
+
+  return <section className="settings-card door-collaboration">
+    <div className="settings-card-heading"><div className="settings-card-icon"><House size={18} /></div><div><h2>Puertas y residentes</h2><p>{doors.length} {doors.length === 1 ? 'puerta disponible' : 'puertas disponibles'}; compartí el timbre con tu familia o administrá varias puertas.</p></div></div>
+    <form className="door-create-form" onSubmit={(event) => { event.preventDefault(); void createDoor() }}>
+      <label className="field-label" htmlFor="new-door-name">Crear otra puerta</label>
+      <div className="door-create-row"><input className="text-input" id="new-door-name" value={newDoorName} maxLength={60} placeholder="Ej. Departamento 2" onChange={(event) => setNewDoorName(event.target.value)} /><button className="button button-quiet button-small" disabled={busy || !newDoorName.trim()} type="submit">Crear</button></div>
+    </form>
+    <h3>Residentes de {door.name}</h3>
+    <div className="door-members-list">{members.map((member) => <div className="door-member-row" key={member.profile_id}><span>{member.email ?? 'Cuenta Timbre'}</span><span>{member.role === 'owner' ? 'Propietario' : 'Residente'}</span>{role === 'owner' && member.role !== 'owner' && <button className="channel-action" disabled={busy} onClick={() => void removeMember(member.profile_id)}>Quitar</button>}</div>)}</div>
+    {role === 'owner' && <>
+      <form className="door-invite-form" onSubmit={(event) => void createInvite(event)}>
+        <label className="field-label" htmlFor="resident-email">Crear invitación</label>
+        <div className="door-create-row"><input className="text-input" id="resident-email" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="persona@ejemplo.com" /><button className="button button-dark button-small" disabled={busy}>Invitar</button></div>
+        <p className="field-hint">No enviamos correos: copiá y compartí el enlace generado. Dura 7 días y la persona debe iniciar sesión con ese mismo correo.</p>
+      </form>
+      {inviteUrl && <div className="invite-link-box"><strong>Invitación lista</strong><code>{inviteUrl}</code><button className="button button-quiet button-small" onClick={() => void navigator.clipboard.writeText(inviteUrl).then(() => setNotice('Enlace copiado.')).catch((copyError: unknown) => setError(`No se pudo copiar: ${getErrorMessage(copyError)}`))}>Copiar enlace</button></div>}
+      {invites.length > 0 && <div className="door-invites-list"><strong>Invitaciones pendientes</strong>{invites.map((invite) => <div className="door-member-row" key={invite.id}><span>{invite.email}</span><span>Vence {formatDate(invite.expires_at)}</span><button className="channel-action" disabled={busy} onClick={() => void revokeInvite(invite.id)}>Cancelar</button></div>)}</div>}
+    </>}
+    <form className="door-invite-form" onSubmit={(event) => void acceptInvitation(event)}>
+      <label className="field-label" htmlFor="door-invite-token">Aceptar invitación</label>
+      <div className="door-create-row"><input className="text-input" id="door-invite-token" value={inviteToken} onChange={(event) => setInviteToken(event.target.value)} placeholder="Pegá el código del enlace de invitación" /><button className="button button-quiet button-small" disabled={busy || !inviteToken.trim()}>Aceptar</button></div>
+    </form>
+    {error && <ErrorBanner message={error} />}{notice && <div className="success-note">{notice}</div>}
+  </section>
 }
 
 function QrPage() {
@@ -656,7 +991,7 @@ function QrPage() {
     document.body.classList.remove('print-a5')
   }
 
-  return <ResidentLayout active="Mi QR" userId={userId ?? '?'} onSignOut={() => void signOut()}><div className="page-content qr-page-content">
+  return <ResidentLayout active="Mi QR" userId={userId ?? '?'} onSignOut={() => void signOut()} doors={data.doors} selectedDoorId={data.selectedDoorId} onSelectDoor={data.selectDoor}><div className="page-content qr-page-content">
     <PageHeading eyebrow="TU ACCESO PÚBLICO" title="Tu QR" description="Imprimilo y pegalo en la entrada. Tus visitas escanean y te avisan." />
     {data.error && <ErrorBanner message={data.error} />}
     {data.loading ? <LoadingCard /> : !data.door ? <EmptyDoor /> : <>

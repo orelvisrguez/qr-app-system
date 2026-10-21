@@ -135,7 +135,7 @@ Deno.serve(async (request) => {
     }
     const { data: eventRow, error: eventError } = await supabase
       .from('ring_events')
-      .select('id, door_id, status, doors!inner(owner_id, quick_replies)')
+      .select('id, door_id, status, doors!inner(quick_replies)')
       .eq('id', eventId)
       .maybeSingle()
     if (eventError) {
@@ -143,9 +143,21 @@ Deno.serve(async (request) => {
       return jsonResponse({ error: 'ring_event_lookup_failed' }, 500, null)
     }
 
-    const door = eventRow?.doors as { owner_id: string; quick_replies: string[] } | undefined
+    const door = eventRow?.doors as { quick_replies: string[] } | undefined
     const reply = door?.quick_replies?.[replyIndex]
-    if (!profile || !eventRow || door?.owner_id !== profile.id || eventRow.status !== 'pending' || !reply) {
+    const { data: membership, error: membershipError } = profile && eventRow
+      ? await supabase
+        .from('door_members')
+        .select('profile_id')
+        .eq('door_id', eventRow.door_id)
+        .eq('profile_id', profile.id)
+        .maybeSingle()
+      : { data: null, error: null }
+    if (membershipError) {
+      console.error('Could not check Telegram door membership:', membershipError.message)
+      return jsonResponse({ error: 'telegram_membership_lookup_failed' }, 500, null)
+    }
+    if (!profile || !eventRow || !membership || eventRow.status !== 'pending' || !reply) {
       await telegramCall(botToken, 'answerCallbackQuery', {
         callback_query_id: callbackId,
         text: 'Este aviso ya no está disponible.',

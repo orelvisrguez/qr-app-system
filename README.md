@@ -1,12 +1,12 @@
 # Timbre QR
 
-PWA mobile-first para que una visita avise al residente desde un QR. Incluye la página pública, acceso con enlace mágico, panel e historial de 30 días, respuestas rápidas, No molestar, generación del QR y las funciones seguras para crear y consultar avisos.
+PWA mobile-first para que una visita avise al residente desde un QR. Incluye acceso con Google OAuth o enlace mágico, panel e historial de 30 días, respuestas rápidas, No molestar, fotos opcionales de visitantes, llamadas WebRTC, varias puertas y residentes compartidos.
 
 El acceso de residentes permite Google OAuth y enlace mágico por correo. Las páginas públicas de [privacidad](/privacidad) y [condiciones](/condiciones) están disponibles para usuarios y revisión de OAuth.
 
 ## Desarrollo
 
-1. Crear un proyecto en Supabase y aplicar `supabase/migrations/202610210001_initial_schema.sql`.
+1. Crear un proyecto en Supabase y aplicar las migraciones de `supabase/migrations` en orden.
 2. Copiar `.env.example` a `.env.local` y completar la URL, la clave anon de Supabase y la clave pública del sitio de Turnstile.
 3. Instalar y arrancar:
 
@@ -16,7 +16,7 @@ El acceso de residentes permite Google OAuth y enlace mágico por correo. Las p�
    ```
 
 4. En Supabase, agregar `http://localhost:5173/panel` a las URL de redirección permitidas de Auth.
-5. Configurar y desplegar las funciones `get-door-public`, `ring`, `get-event-status`, `telegram-link-code`, `telegram-webhook` y `push-subscription`:
+5. Configurar y desplegar las funciones `get-door-public`, `ring`, `get-event-status`, `telegram-link-code`, `telegram-webhook`, `push-subscription`, `door-members`, `door-call-signal`, `visitor-photo-url` y `cleanup-media`:
 
    ```sh
    supabase functions deploy get-door-public
@@ -25,6 +25,10 @@ El acceso de residentes permite Google OAuth y enlace mágico por correo. Las p�
    supabase functions deploy telegram-link-code
    supabase functions deploy telegram-webhook
    supabase functions deploy push-subscription
+   supabase functions deploy door-members
+   supabase functions deploy door-call-signal
+   supabase functions deploy visitor-photo-url
+   supabase functions deploy cleanup-media
    ```
 
    Para desarrollo local, agregar los orígenes permitidos a `CORS_ALLOWED_ORIGINS` (separados por comas). `ring` necesita `TURNSTILE_SECRET_KEY`, `TURNSTILE_HOSTNAMES`, `HASH_SALT`, `TELEGRAM_BOT_TOKEN` y las claves VAPID `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` y `VAPID_SUBJECT`; `telegram-link-code` necesita `SUPABASE_ANON_KEY`, `HASH_SALT` y `TELEGRAM_BOT_USERNAME`; `telegram-webhook` necesita `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` y `HASH_SALT`. Las funciones también necesitan `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY`. La clave pública VAPID va en `VITE_VAPID_PUBLIC_KEY` para el frontend; mantené la clave privada únicamente en secretos de Supabase. Nunca uses la clave service role ni los secretos de Turnstile, Telegram, VAPID privado o hash en variables `VITE_*`.
@@ -46,6 +50,10 @@ Al autenticar una cuenta nueva, la migración crea su perfil y una puerta con sl
 El widget Turnstile existente usa la acción `door_ring`. La función `ring` valida el token en `siteverify`, exige esa acción y comprueba el hostname contra `TURNSTILE_HOSTNAMES`. En producción, este secreto contiene solo los hostnames productivos aprobados; no agregues `localhost` ni `127.0.0.1` al allowlist de hostname del backend productivo. La site key es pública y se configura como `VITE_TURNSTILE_SITE_KEY`; el secreto vive únicamente en Edge Function Secrets.
 
 El service worker proporciona el shell instalable y conserva recursos visitados para navegación de respaldo sin conexión. La interacción de avisos usa polling cada 3 segundos, con vencimiento a los 60 segundos. En el panel residente, Supabase Realtime actualiza los avisos.
+
+Las fotos son opcionales, se comprimen en el navegador, se guardan en el bucket privado `visitor-photos` y solo los miembros de la puerta pueden pedir una URL firmada temporal. La migración conserva avisos durante 30 días y encola las fotos asociadas para su eliminación. Para completar la retención, programá diariamente una solicitud POST a la Edge Function `cleanup-media` desde un programador seguro (por ejemplo, Supabase Cron/HTTP). Enviá `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` desde la configuración protegida del programador; nunca guardes esa clave en el frontend, en este repositorio ni en una URL pública.
+
+Las llamadas de audio/video usan WebRTC con servidores STUN públicos. No se graban ni almacenan los medios, pero la señalización temporal se conserva en Supabase hasta 15 minutos. STUN no garantiza conectividad entre redes restrictivas; para mayor fiabilidad se necesita configurar un proveedor TURN y sus credenciales como secretos de servidor antes de habilitar llamadas en redes que lo requieran.
 
 En Vercel, `vercel.json` reescribe las rutas de React Router a `index.html` para que URLs como `/login` y `/t/<slug>` funcionen también al abrirlas directamente.
 

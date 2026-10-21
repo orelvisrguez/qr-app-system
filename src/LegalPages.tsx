@@ -51,6 +51,9 @@ function PrivacyPolicy() {
           <li><strong>Cuenta del residente:</strong> correo electrónico e información básica del perfil que proporciona el proveedor de acceso, como nombre o imagen si están disponibles. Si iniciás sesión con Google, Timbre solicita únicamente los permisos básicos de identidad (correo y perfil); no accede a Gmail, Drive ni a tus contactos.</li>
           <li><strong>Configuración del timbre:</strong> enlace QR, estado activo, horarios de No molestar y respuestas rápidas.</li>
           <li><strong>Avisos de visitantes:</strong> nombre opcional, motivo, fecha y hora, estado del aviso y respuesta del residente.</li>
+          <li><strong>Foto opcional:</strong> si la visita decide adjuntarla, almacenamos la imagen comprimida en un espacio privado. Solo los residentes autorizados de esa puerta pueden verla; se elimina junto con el aviso cuando se ejecuta la tarea de mantenimiento.</li>
+          <li><strong>Llamadas opcionales:</strong> si la visita solicita una llamada y un residente la acepta, el navegador puede usar el micrófono y la cámara con permiso. Timbre no graba ni almacena el audio o video; conserva temporalmente datos técnicos de conexión para establecer la llamada, que vencen a los 15 minutos. La conexión puede revelar a la otra persona información de red, como la dirección IP.</li>
+          <li><strong>Puertas compartidas:</strong> si un residente te invita, guardamos tu correo y tu rol de acceso a esa puerta para que puedas consultar avisos y responderlos. El enlace de invitación vence a los 7 días y se usa una sola vez.</li>
           <li><strong>Prevención de abuso:</strong> la dirección IP y un identificador del dispositivo se transforman en hashes para aplicar límites de uso; la tabla de avisos no guarda esos valores originales.</li>
           <li><strong>Telegram opcional:</strong> si vinculás el bot, guardamos el identificador del chat y enviamos allí el nombre opcional del visitante, el motivo y la hora del aviso para que puedas responder desde Telegram.</li>
           <li><strong>Notificaciones web opcionales:</strong> si las activás, guardamos la suscripción de este navegador (endpoint y claves técnicas) para enviar avisos push. Podés desactivarlas desde Ajustes; el permiso también se administra en tu navegador.</li>
@@ -60,12 +63,12 @@ function PrivacyPolicy() {
 
       <section>
         <h2>Para qué usamos la información</h2>
-        <p>Usamos estos datos para autenticar residentes, administrar el timbre, entregar y responder avisos, proteger el servicio contra abuso, mantener la sesión y atender consultas. No vendemos datos personales ni usamos los datos del perfil de Google para publicidad.</p>
+        <p>Usamos estos datos para autenticar residentes, administrar puertas compartidas, entregar y responder avisos, mostrar las fotos que la visita haya elegido compartir, establecer llamadas solicitadas, proteger el servicio contra abuso, mantener la sesión y atender consultas. No vendemos datos personales ni usamos los datos del perfil de Google para publicidad.</p>
       </section>
 
       <section>
         <h2>Servicios que intervienen</h2>
-        <p>El servicio utiliza proveedores para operar: Supabase (autenticación y base de datos), Vercel (alojamiento web), Google (si elegís iniciar sesión con Google), Cloudflare Turnstile (prevención de abuso), Telegram (solo si vinculás ese canal) y el servicio push de tu navegador o dispositivo (solo si activás las notificaciones web). Estos proveedores reciben la información necesaria para prestar su función y la procesan conforme a sus propias políticas. La infraestructura puede procesar o almacenar datos en países distintos al tuyo.</p>
+        <p>El servicio utiliza proveedores para operar: Supabase (autenticación, base de datos y almacenamiento), Vercel (alojamiento web), Google (si elegís iniciar sesión con Google), Cloudflare Turnstile (prevención de abuso), Telegram (solo si vinculás ese canal), los servicios push del navegador o dispositivo (solo si activás las notificaciones web) y servidores STUN de Google y Cloudflare para ayudar a conectar llamadas. La señalización de llamadas pasa temporalmente por Supabase; el audio y video se transmiten entre los dispositivos y Timbre no los graba. Estos proveedores reciben la información necesaria para prestar su función y la procesan conforme a sus propias políticas. La infraestructura puede procesar o almacenar datos en países distintos al tuyo.</p>
       </section>
 
       <section>
@@ -89,7 +92,7 @@ function TermsOfService() {
 
       <section>
         <h2>Qué ofrece el servicio</h2>
-        <p>Timbre QR permite crear un enlace o código QR para que las visitas envíen avisos al residente. El residente puede administrar el timbre, consultar avisos recientes y responder desde el panel o, si lo vincula, mediante Telegram. El servicio puede modificarse, interrumpirse o incorporar funciones nuevas.</p>
+        <p>Timbre QR permite crear varias puertas y sus enlaces o códigos QR, invitar residentes y recibir avisos de las visitas. La visita puede compartir una foto opcional y solicitar una llamada de audio/video; el residente decide si la atiende. El residente puede responder desde el panel o, si lo vincula, mediante Telegram. El servicio puede modificarse, interrumpirse o incorporar funciones nuevas.</p>
       </section>
 
       <section>
@@ -101,6 +104,7 @@ function TermsOfService() {
       <section>
         <h2>Avisos y notificaciones</h2>
         <p>El QR facilita la comunicación, pero no es un sistema de emergencia ni garantiza que el residente reciba, lea o responda un aviso. La entrega depende de la conexión, la disponibilidad de Timbre QR, la configuración del navegador y de terceros como Supabase, Vercel, Cloudflare, Telegram y los servicios push del dispositivo. No uses el servicio para comunicaciones urgentes o de seguridad crítica.</p>
+        <p>Las llamadas requieren permiso para usar cámara y micrófono en ambos dispositivos y pueden no conectarse por restricciones de red. No se graban; al usar una conexión entre dispositivos, la otra persona puede conocer información técnica de red, incluida la dirección IP. Compartí fotos solo con el consentimiento de la persona que aparece en ellas.</p>
       </section>
 
       <section>

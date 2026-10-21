@@ -40,6 +40,8 @@ export type RingEvent = {
   response_text: string | null
   created_at: string
   responded_at: string | null
+  visitor_photo_path: string | null
+  call_requested: boolean
 }
 
 export const defaultReplies = [
