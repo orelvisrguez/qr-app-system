@@ -76,7 +76,7 @@ export function LandingPage() {
         <div><span className="feature-number">02</span><div><strong>Te avisan al instante</strong><p>El residente recibe el aviso en su panel.</p></div></div>
         <div><span className="feature-number">03</span><div><strong>Respondé con un toque</strong><p>Tu respuesta le llega a quien te visita.</p></div></div>
       </section>
-      <footer className="landing-footer"><Logo /><span>Hecho para que llegar sea más fácil.</span><Link to="/login">Entrar a mi panel <ChevronRight size={15} /></Link></footer>
+      <footer className="landing-footer"><Logo /><span>Hecho para que llegar sea más fácil.</span><div className="legal-links"><Link to="/privacidad">Privacidad</Link><Link to="/condiciones">Condiciones</Link></div><Link to="/login">Entrar a mi panel <ChevronRight size={15} /></Link></footer>
     </main>
   )
 }

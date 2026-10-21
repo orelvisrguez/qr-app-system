@@ -2,6 +2,8 @@
 
 PWA mobile-first para que una visita avise al residente desde un QR. Incluye la página pública, acceso con enlace mágico, panel e historial de 30 días, respuestas rápidas, No molestar, generación del QR y las funciones seguras para crear y consultar avisos.
 
+El acceso de residentes permite Google OAuth y enlace mágico por correo. Las páginas públicas de [privacidad](/privacidad) y [condiciones](/condiciones) están disponibles para usuarios y revisión de OAuth.
+
 ## Desarrollo
 
 1. Crear un proyecto en Supabase y aplicar `supabase/migrations/202610210001_initial_schema.sql`.
@@ -32,7 +34,7 @@ PWA mobile-first para que una visita avise al residente desde un QR. Incluye la 
 
 En este workspace el proyecto `mtaarwgdeatipdmarxkh` ya está vinculado con Supabase CLI. La migración inicial está aplicada, las cinco Edge Functions están desplegadas y `.env.local` contiene la URL y clave pública para Vite; ese archivo está excluido de Git. El secreto `CORS_ALLOWED_ORIGINS` permite actualmente `http://localhost:5173` y `http://127.0.0.1:5173` para desarrollo local. Agregá el origen real de producción antes de publicar.
 
-El login por correo requiere agregar la URL de redirección del sitio (incluyendo `/panel`) a la lista permitida de Supabase Auth. En este workspace, Turnstile está configurado localmente y sus secretos de servidor están guardados en Supabase. Telegram está configurado con el bot `@MiTimbreAppBot` y el webhook apunta a la función `telegram-webhook`; sus credenciales y el secreto del webhook solo están guardados en Supabase. Ningún secreto de servidor debe guardarse en variables `VITE_*`.
+Google OAuth debe estar habilitado como proveedor en Supabase. Configurá como URL de redirección permitida `https://tutimbre.vercel.app/panel`, además de las URLs locales de desarrollo. El Client ID y el Client Secret de Google se cargan únicamente en la configuración del proveedor Google en Supabase; nunca los guardes en variables `VITE_*` ni en Git. En este workspace, Turnstile está configurado localmente y sus secretos de servidor están guardados en Supabase. Telegram está configurado con el bot `@MiTimbreAppBot` y el webhook apunta a la función `telegram-webhook`; sus credenciales y el secreto del webhook solo están guardados en Supabase. Ningún secreto de servidor debe guardarse en variables `VITE_*`.
 
 El SMTP integrado de Supabase es solo para pruebas y tiene un límite bajo de envíos; si aparece `email rate limit exceeded`, esperá a que se restablezca o configurá un proveedor SMTP propio en [Auth > SMTP Settings](https://supabase.com/dashboard/project/mtaarwgdeatipdmarxkh/auth/smtp). Para uso público, verificá también el dominio remitente con tu proveedor.
 

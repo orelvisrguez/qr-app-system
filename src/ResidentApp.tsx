@@ -215,6 +215,20 @@ function LoginPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
+  async function continueWithGoogle() {
+    if (!supabase) return
+    setBusy(true)
+    setError('')
+    const { error: authError } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: `${window.location.origin}/panel` },
+    })
+    if (authError) {
+      setBusy(false)
+      setError(authError.message)
+    }
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!supabase) return
@@ -244,12 +258,16 @@ function LoginPage() {
         {sent ? (
           <><span className="eyebrow">REVISÁ TU CORREO</span><h1>Ya casi estás.</h1><p className="auth-description">Te mandamos un enlace a <strong>{email}</strong>. Abrilo desde este dispositivo para entrar a tu panel.</p><div className="success-note"><Check size={17} /> Enlace enviado. También podés revisar correo no deseado.</div><button className="button button-quiet full-width" onClick={() => setSent(false)}>Usar otro correo</button></>
         ) : (
-          <><span className="eyebrow">PANEL DEL RESIDENTE</span><h1>Tu puerta,<br />bajo control.</h1><p className="auth-description">Entrá con un enlace seguro que te mandamos por correo. No necesitás contraseña.</p><form className="auth-form" onSubmit={submit}><label htmlFor="email">Tu correo electrónico</label><input id="email" type="email" autoComplete="email" placeholder="vos@ejemplo.com" value={email} onChange={(event) => setEmail(event.target.value)} required /><button className="button button-dark full-width" type="submit" disabled={busy}>{busy ? 'Enviando…' : 'Mandarme un enlace'} <ChevronRight size={18} /></button></form>{error && <p className="inline-error" role="alert">{error}{error.startsWith('Supabase alcanzó el límite') && <> <a href="https://supabase.com/dashboard/project/mtaarwgdeatipdmarxkh/auth/smtp" target="_blank" rel="noreferrer">Configurar SMTP en Supabase</a>.</>}</p>}<div className="privacy-note"><ShieldCheck size={15} /> Solo vos podés administrar tu puerta.</div></>
+          <><span className="eyebrow">PANEL DEL RESIDENTE</span><h1>Tu puerta,<br />bajo control.</h1><p className="auth-description">Entrá con tu cuenta de Google, sin contraseña ni correos de acceso.</p><button className="google-sign-in full-width" type="button" onClick={() => void continueWithGoogle()} disabled={busy}><GoogleMark />{busy ? 'Conectando…' : 'Continuar con Google'}</button><div className="auth-divider"><span>o con enlace por correo</span></div><form className="auth-form" onSubmit={submit}><label htmlFor="email">Tu correo electrónico</label><input id="email" type="email" autoComplete="email" placeholder="vos@ejemplo.com" value={email} onChange={(event) => setEmail(event.target.value)} required /><button className="button button-dark full-width" type="submit" disabled={busy}>{busy ? 'Enviando…' : 'Mandarme un enlace'} <ChevronRight size={18} /></button></form>{error && <p className="inline-error" role="alert">{error}{error.startsWith('Supabase alcanzó el límite') && <> <a href="https://supabase.com/dashboard/project/mtaarwgdeatipdmarxkh/auth/smtp" target="_blank" rel="noreferrer">Configurar SMTP en Supabase</a>.</>}</p>}<div className="privacy-note"><ShieldCheck size={15} /> Solo solicitamos los datos básicos de tu cuenta para iniciar sesión.</div></>
         )}
       </section>
-      <p className="auth-footnote">Simple, privado y sin hardware.</p>
+      <p className="auth-footnote">Al continuar aceptás las <Link to="/condiciones">condiciones del servicio</Link> y la <Link to="/privacidad">política de privacidad</Link>.</p>
     </main>
   )
+}
+
+function GoogleMark() {
+  return <svg aria-hidden="true" viewBox="0 0 48 48" className="google-mark"><path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11a9.4 9.4 0 0 1-4.1 6.2v5.1h6.6c3.9-3.6 6.1-8.8 6.1-15Z" /><path fill="#34A853" d="M24 44c5.5 0 10.1-1.8 13.5-4.8l-6.6-5.1c-1.8 1.2-4.1 2-6.9 2-5.3 0-9.8-3.6-11.4-8.4H5.8v5.3A20 20 0 0 0 24 44Z" /><path fill="#FBBC05" d="M12.6 27.7a12 12 0 0 1 0-7.5v-5.3H5.8a20 20 0 0 0 0 18.1l6.8-5.3Z" /><path fill="#EA4335" d="M24 11.8c3 0 5.7 1 7.8 3.1l5.9-5.9C34.1 5.7 29.5 4 24 4A20 20 0 0 0 5.8 14.9l6.8 5.3c1.6-4.8 6.1-8.4 11.4-8.4Z" /></svg>
 }
 
 function ResidentLayout({ children, active, userId, onSignOut }: { children: React.ReactNode; active: string; userId: string; onSignOut: () => void }) {
