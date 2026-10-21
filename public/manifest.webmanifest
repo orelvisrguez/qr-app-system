@@ -1,0 +1,18 @@
+{
+  "name": "Timbre QR",
+  "short_name": "Timbre",
+  "description": "Avisos simples y privados para tu puerta.",
+  "lang": "es-AR",
+  "start_url": "/panel",
+  "display": "standalone",
+  "background_color": "#f7f7f2",
+  "theme_color": "#f7f7f2",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

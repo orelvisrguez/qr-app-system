@@ -1,0 +1,14 @@
+[functions.get-door-public]
+verify_jwt = false
+
+[functions.ring]
+verify_jwt = false
+
+[functions.get-event-status]
+verify_jwt = false
+
+[functions.telegram-link-code]
+verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
