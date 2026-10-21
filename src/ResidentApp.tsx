@@ -225,8 +225,13 @@ function LoginPage() {
       options: { emailRedirectTo: `${window.location.origin}/panel` },
     })
     setBusy(false)
-    if (authError) setError(authError.message)
-    else setSent(true)
+    if (authError) {
+      setError(authError.message.toLowerCase().includes('email rate limit exceeded')
+        ? 'Supabase alcanzó el límite de envíos de correo. Esperá a que se libere (puede tardar hasta una hora) o configurá SMTP propio para permitir el acceso por email.'
+        : authError.message)
+    } else {
+      setSent(true)
+    }
   }
 
   if (!isSupabaseConfigured) return <SetupRequired />
@@ -239,7 +244,7 @@ function LoginPage() {
         {sent ? (
           <><span className="eyebrow">REVISÁ TU CORREO</span><h1>Ya casi estás.</h1><p className="auth-description">Te mandamos un enlace a <strong>{email}</strong>. Abrilo desde este dispositivo para entrar a tu panel.</p><div className="success-note"><Check size={17} /> Enlace enviado. También podés revisar correo no deseado.</div><button className="button button-quiet full-width" onClick={() => setSent(false)}>Usar otro correo</button></>
         ) : (
-          <><span className="eyebrow">PANEL DEL RESIDENTE</span><h1>Tu puerta,<br />bajo control.</h1><p className="auth-description">Entrá con un enlace seguro que te mandamos por correo. No necesitás contraseña.</p><form className="auth-form" onSubmit={submit}><label htmlFor="email">Tu correo electrónico</label><input id="email" type="email" autoComplete="email" placeholder="vos@ejemplo.com" value={email} onChange={(event) => setEmail(event.target.value)} required /><button className="button button-dark full-width" type="submit" disabled={busy}>{busy ? 'Enviando…' : 'Mandarme un enlace'} <ChevronRight size={18} /></button></form>{error && <p className="inline-error" role="alert">{error}</p>}<div className="privacy-note"><ShieldCheck size={15} /> Solo vos podés administrar tu puerta.</div></>
+          <><span className="eyebrow">PANEL DEL RESIDENTE</span><h1>Tu puerta,<br />bajo control.</h1><p className="auth-description">Entrá con un enlace seguro que te mandamos por correo. No necesitás contraseña.</p><form className="auth-form" onSubmit={submit}><label htmlFor="email">Tu correo electrónico</label><input id="email" type="email" autoComplete="email" placeholder="vos@ejemplo.com" value={email} onChange={(event) => setEmail(event.target.value)} required /><button className="button button-dark full-width" type="submit" disabled={busy}>{busy ? 'Enviando…' : 'Mandarme un enlace'} <ChevronRight size={18} /></button></form>{error && <p className="inline-error" role="alert">{error}{error.startsWith('Supabase alcanzó el límite') && <> <a href="https://supabase.com/dashboard/project/mtaarwgdeatipdmarxkh/auth/smtp" target="_blank" rel="noreferrer">Configurar SMTP en Supabase</a>.</>}</p>}<div className="privacy-note"><ShieldCheck size={15} /> Solo vos podés administrar tu puerta.</div></>
         )}
       </section>
       <p className="auth-footnote">Simple, privado y sin hardware.</p>

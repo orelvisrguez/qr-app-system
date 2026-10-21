@@ -34,6 +34,8 @@ En este workspace el proyecto `mtaarwgdeatipdmarxkh` ya está vinculado con Supa
 
 El login por correo requiere agregar la URL de redirección del sitio (incluyendo `/panel`) a la lista permitida de Supabase Auth. En este workspace, Turnstile está configurado localmente y sus secretos de servidor están guardados en Supabase. Telegram está configurado con el bot `@MiTimbreAppBot` y el webhook apunta a la función `telegram-webhook`; sus credenciales y el secreto del webhook solo están guardados en Supabase. Ningún secreto de servidor debe guardarse en variables `VITE_*`.
 
+El SMTP integrado de Supabase es solo para pruebas y tiene un límite bajo de envíos; si aparece `email rate limit exceeded`, esperá a que se restablezca o configurá un proveedor SMTP propio en [Auth > SMTP Settings](https://supabase.com/dashboard/project/mtaarwgdeatipdmarxkh/auth/smtp). Para uso público, verificá también el dominio remitente con tu proveedor.
+
 Al autenticar una cuenta nueva, la migración crea su perfil y una puerta con slug aleatorio. El visitante nunca accede directamente a las tablas: el timbre y la consulta de respuesta pasan por funciones Edge; el estado público se consulta con un UUID impredecible. Los eventos conservan hashes HMAC de IP y dispositivo, no sus valores originales.
 
 ## PWA y funcionalidades
