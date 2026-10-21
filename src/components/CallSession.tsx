@@ -16,6 +16,13 @@ type CallSignal = {
   candidates: RTCIceCandidateInit[]
 }
 
+function isIceServer(value: unknown): value is RTCIceServer {
+  if (typeof value !== 'object' || value === null || !('urls' in value)) return false
+  const urls = value.urls
+  return typeof urls === 'string'
+    || (Array.isArray(urls) && urls.length > 0 && urls.every((url) => typeof url === 'string'))
+}
+
 export function CallSession({ eventId, callId, role, onClose }: CallSessionProps) {
   const localVideo = useRef<HTMLVideoElement>(null)
   const remoteVideo = useRef<HTMLVideoElement>(null)
@@ -50,6 +57,16 @@ export function CallSession({ eventId, callId, role, onClose }: CallSessionProps
 
     async function ensurePeer() {
       if (peer.current) return peer.current
+      const turnConfig = await signal('ice-servers')
+      if (
+        typeof turnConfig !== 'object'
+        || turnConfig === null
+        || !('ice_servers' in turnConfig)
+        || !Array.isArray(turnConfig.ice_servers)
+        || !turnConfig.ice_servers.every(isIceServer)
+      ) {
+        throw new Error('No pudimos obtener la configuración segura para la llamada.')
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
       if (!active) {
         stream.getTracks().forEach((track) => track.stop())
@@ -58,10 +75,7 @@ export function CallSession({ eventId, callId, role, onClose }: CallSessionProps
       localStream.current = stream
       if (localVideo.current) localVideo.current.srcObject = stream
       const connection = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun.cloudflare.com:3478' },
-        ],
+        iceServers: turnConfig.ice_servers,
       })
       stream.getTracks().forEach((track) => connection.addTrack(track, stream))
       connection.ontrack = (event) => {
