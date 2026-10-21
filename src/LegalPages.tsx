@@ -52,7 +52,7 @@ function PrivacyPolicy() {
           <li><strong>Configuración del timbre:</strong> enlace QR, estado activo, horarios de No molestar y respuestas rápidas.</li>
           <li><strong>Avisos de visitantes:</strong> nombre opcional, motivo, fecha y hora, estado del aviso y respuesta del residente.</li>
           <li><strong>Prevención de abuso:</strong> la dirección IP y un identificador del dispositivo se transforman en hashes para aplicar límites de uso; la tabla de avisos no guarda esos valores originales.</li>
-          <li><strong>Telegram opcional:</strong> si vinculás el bot, guardamos el identificador del chat para enviarte avisos y permitir respuestas desde Telegram.</li>
+          <li><strong>Telegram opcional:</strong> si vinculás el bot, guardamos el identificador del chat y enviamos allí el nombre opcional del visitante, el motivo y la hora del aviso para que puedas responder desde Telegram.</li>
           <li><strong>Datos técnicos:</strong> el navegador puede almacenar la sesión de acceso y recursos necesarios para la PWA y su funcionamiento sin conexión.</li>
         </ul>
       </section>
