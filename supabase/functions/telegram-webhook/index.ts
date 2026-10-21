@@ -65,19 +65,15 @@ Deno.serve(async (request) => {
       }
 
       const tokenHash = await hashSecret(rawToken, hashSalt)
-      const { data: code, error: codeError } = await supabase
-        .from('telegram_link_codes')
-        .update({ used_at: new Date().toISOString() })
-        .eq('token_hash', tokenHash)
-        .is('used_at', null)
-        .gt('expires_at', new Date().toISOString())
-        .select('profile_id')
-        .maybeSingle()
+      const { data: profileId, error: codeError } = await supabase.rpc('consume_telegram_link_code', {
+        p_token_hash: tokenHash,
+        p_chat_id: String(chatId),
+      })
       if (codeError) {
         console.error('Could not validate Telegram link code:', codeError.message)
         return jsonResponse({ error: 'link_code_lookup_failed' }, 500, null)
       }
-      if (!code) {
+      if (typeof profileId !== 'string') {
         await telegramCall(botToken, 'sendMessage', {
           chat_id: chatId,
           text: 'El enlace venció o ya fue usado. Generá uno nuevo desde Ajustes.',
@@ -85,14 +81,6 @@ Deno.serve(async (request) => {
         return jsonResponse({ ok: true }, 200, null)
       }
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ telegram_chat_id: String(chatId) })
-        .eq('id', code.profile_id)
-      if (profileError) {
-        console.error('Could not link Telegram profile:', profileError.message)
-        return jsonResponse({ error: 'telegram_link_failed' }, 500, null)
-      }
       await telegramCall(botToken, 'sendMessage', {
         chat_id: chatId,
         text: '¡Listo! Este chat ya está vinculado a tu timbre. Acá vas a recibir los avisos.',

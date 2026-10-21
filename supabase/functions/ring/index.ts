@@ -222,12 +222,17 @@ Deno.serve(async (request) => {
       callback_data: `answer:${eventId}:${index}`,
     }])
     try {
-      await Promise.all((recipientProfiles ?? []).filter((resident) => resident.telegram_chat_id).map(async (resident) => {
+      const telegramChatIds = [...new Set(
+        (recipientProfiles ?? [])
+          .map((resident) => resident.telegram_chat_id)
+          .filter((chatId): chatId is string => Boolean(chatId)),
+      )]
+      await Promise.all(telegramChatIds.map(async (chatId) => {
         const telegramResponse = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            chat_id: resident.telegram_chat_id,
+            chat_id: chatId,
             text: `🔔 Timbre — ${visitorLabel} (${body.reason}) · ${new Intl.DateTimeFormat('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date())}`,
             disable_notification: quiet,
             reply_markup: { inline_keyboard: keyboard },
