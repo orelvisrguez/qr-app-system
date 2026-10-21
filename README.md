@@ -42,6 +42,8 @@ El widget Turnstile existente usa la acción `door_ring`. La función `ring` val
 
 El service worker proporciona el shell instalable y conserva recursos visitados para navegación de respaldo sin conexión. La interacción de avisos usa polling cada 3 segundos, con vencimiento a los 60 segundos. En el panel residente, Supabase Realtime actualiza los avisos.
 
+En Vercel, `vercel.json` reescribe las rutas de React Router a `index.html` para que URLs como `/login` y `/t/<slug>` funcionen también al abrirlas directamente.
+
 Los avisos se envían a Telegram cuando hay un chat vinculado. Los botones del mensaje responden al visitante con un toque. Durante No molestar se guarda el aviso y Telegram lo entrega sin sonido. Las notificaciones Web Push todavía no están implementadas y se muestran como próximas en Ajustes. La verificación Turnstile es obligatoria para crear avisos. Para depurar localmente, crear una clave Turnstile de prueba desde Cloudflare.
 
 `cleanup_old_ring_events()` elimina avisos de más de 30 días. Programá su ejecución diaria desde Supabase Cron llamando la función con privilegios de servicio.
