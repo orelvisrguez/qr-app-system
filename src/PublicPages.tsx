@@ -175,7 +175,7 @@ export function VisitorPage() {
         setEventId(data.event_id)
         setPhase('waiting')
         setResponse('')
-        if (!data.notification_sent) setMessage('El aviso quedó registrado, pero esta puerta no tiene Telegram vinculado. Si podés, avisá directamente en la puerta.')
+        if (!data.notification_sent)         setMessage('El aviso quedó registrado, pero no hay notificaciones activas para esta puerta. Si podés, avisá directamente en la puerta.')
       } else {
         setMessage('No pudimos enviar el aviso. Probá de nuevo.')
       }

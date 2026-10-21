@@ -12,3 +12,6 @@ verify_jwt = false
 
 [functions.telegram-webhook]
 verify_jwt = false
+
+[functions.push-subscription]
+verify_jwt = false

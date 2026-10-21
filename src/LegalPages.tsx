@@ -53,6 +53,7 @@ function PrivacyPolicy() {
           <li><strong>Avisos de visitantes:</strong> nombre opcional, motivo, fecha y hora, estado del aviso y respuesta del residente.</li>
           <li><strong>Prevención de abuso:</strong> la dirección IP y un identificador del dispositivo se transforman en hashes para aplicar límites de uso; la tabla de avisos no guarda esos valores originales.</li>
           <li><strong>Telegram opcional:</strong> si vinculás el bot, guardamos el identificador del chat y enviamos allí el nombre opcional del visitante, el motivo y la hora del aviso para que puedas responder desde Telegram.</li>
+          <li><strong>Notificaciones web opcionales:</strong> si las activás, guardamos la suscripción de este navegador (endpoint y claves técnicas) para enviar avisos push. Podés desactivarlas desde Ajustes; el permiso también se administra en tu navegador.</li>
           <li><strong>Datos técnicos:</strong> el navegador puede almacenar la sesión de acceso y recursos necesarios para la PWA y su funcionamiento sin conexión.</li>
         </ul>
       </section>
@@ -64,7 +65,7 @@ function PrivacyPolicy() {
 
       <section>
         <h2>Servicios que intervienen</h2>
-        <p>El servicio utiliza proveedores para operar: Supabase (autenticación y base de datos), Vercel (alojamiento web), Google (si elegís iniciar sesión con Google), Cloudflare Turnstile (prevención de abuso) y Telegram (solo si vinculás ese canal). Estos proveedores reciben la información necesaria para prestar su función y la procesan conforme a sus propias políticas. La infraestructura puede procesar o almacenar datos en países distintos al tuyo.</p>
+        <p>El servicio utiliza proveedores para operar: Supabase (autenticación y base de datos), Vercel (alojamiento web), Google (si elegís iniciar sesión con Google), Cloudflare Turnstile (prevención de abuso), Telegram (solo si vinculás ese canal) y el servicio push de tu navegador o dispositivo (solo si activás las notificaciones web). Estos proveedores reciben la información necesaria para prestar su función y la procesan conforme a sus propias políticas. La infraestructura puede procesar o almacenar datos en países distintos al tuyo.</p>
       </section>
 
       <section>
@@ -99,7 +100,7 @@ function TermsOfService() {
 
       <section>
         <h2>Avisos y notificaciones</h2>
-        <p>El QR facilita la comunicación, pero no es un sistema de emergencia ni garantiza que el residente reciba, lea o responda un aviso. La entrega depende de la conexión, la disponibilidad de Timbre QR y de terceros como Supabase, Vercel, Cloudflare y Telegram. No uses el servicio para comunicaciones urgentes o de seguridad crítica.</p>
+        <p>El QR facilita la comunicación, pero no es un sistema de emergencia ni garantiza que el residente reciba, lea o responda un aviso. La entrega depende de la conexión, la disponibilidad de Timbre QR, la configuración del navegador y de terceros como Supabase, Vercel, Cloudflare, Telegram y los servicios push del dispositivo. No uses el servicio para comunicaciones urgentes o de seguridad crítica.</p>
       </section>
 
       <section>

@@ -37,6 +37,7 @@ import {
   type Door,
   type RingEvent,
 } from './lib/supabase'
+import { decodeVapidPublicKey, getPushPublicKey, isPushSupported } from './lib/push'
 
 const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY
 const TurnstileWidget = lazy(() => import('@marsidev/react-turnstile').then(({ Turnstile }) => ({ default: Turnstile })))
@@ -413,6 +414,8 @@ function SettingsPage() {
   const [telegramChatId, setTelegramChatId] = useState<string | null>(null)
   const [telegramLink, setTelegramLink] = useState('')
   const [telegramBusy, setTelegramBusy] = useState(false)
+  const [pushStatus, setPushStatus] = useState<'loading' | 'unsupported' | 'unconfigured' | 'disabled' | 'denied' | 'enabled'>('loading')
+  const [pushBusy, setPushBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -435,6 +438,36 @@ function SettingsPage() {
         else setTelegramChatId(profile?.telegram_chat_id ?? null)
       })
   }, [userId])
+
+  useEffect(() => {
+    if (!isPushSupported()) {
+      setPushStatus('unsupported')
+      return
+    }
+    if (!getPushPublicKey()) {
+      setPushStatus('unconfigured')
+      return
+    }
+    let active = true
+    void (async () => {
+      try {
+        const registration = await navigator.serviceWorker.getRegistration()
+        if (!active) return
+        if (!registration) {
+          setPushStatus('unsupported')
+          return
+        }
+        const subscription = await registration.pushManager.getSubscription()
+        if (!active) return
+        setPushStatus(subscription ? 'enabled' : Notification.permission === 'denied' ? 'denied' : 'disabled')
+      } catch (pushError) {
+        if (!active) return
+        setPushStatus('unsupported')
+        setError(pushError instanceof Error ? `No pudimos revisar las notificaciones: ${pushError.message}` : 'No pudimos revisar las notificaciones.')
+      }
+    })()
+    return () => { active = false }
+  }, [])
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -506,6 +539,60 @@ function SettingsPage() {
     }
   }
 
+  async function toggleWebPush() {
+    if (!supabase || !isPushSupported()) {
+      setPushStatus('unsupported')
+      return
+    }
+    setPushBusy(true)
+    setError('')
+    try {
+      const registration = await navigator.serviceWorker.ready
+      const existing = await registration.pushManager.getSubscription()
+      if (existing) {
+        const { error: removeError } = await supabase.functions.invoke('push-subscription', {
+          body: { action: 'unsubscribe', subscription: existing.toJSON() },
+        })
+        if (removeError) throw removeError
+        await existing.unsubscribe()
+        setPushStatus(Notification.permission === 'denied' ? 'denied' : 'disabled')
+        return
+      }
+
+      const permission = Notification.permission === 'granted'
+        ? 'granted'
+        : await Notification.requestPermission()
+      if (permission !== 'granted') {
+        setPushStatus(permission === 'denied' ? 'denied' : 'disabled')
+        return
+      }
+
+      const publicKey = getPushPublicKey()
+      if (!publicKey) {
+        setPushStatus('unconfigured')
+        throw new Error('Las notificaciones web todavía no están configuradas en este despliegue.')
+      }
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: decodeVapidPublicKey(publicKey),
+      })
+      const { error: saveError } = await supabase.functions.invoke('push-subscription', {
+        body: { action: 'subscribe', subscription: subscription.toJSON() },
+      })
+      if (saveError) {
+        await subscription.unsubscribe()
+        throw saveError
+      }
+      setPushStatus('enabled')
+    } catch (pushError) {
+      setError(pushError instanceof Error
+        ? `No pudimos configurar las notificaciones web: ${pushError.message}`
+        : 'No pudimos configurar las notificaciones web.')
+    } finally {
+      setPushBusy(false)
+    }
+  }
+
   return <ResidentLayout active="Ajustes" userId={userId ?? '?'} onSignOut={() => void signOut()}><div className="page-content">
     <PageHeading eyebrow="PERSONALIZÁ TU TIMBRE" title="Ajustes" description="Administrá tu puerta y elegí cómo responder." />
     {data.error && <ErrorBanner message={data.error} />}
@@ -518,7 +605,7 @@ function SettingsPage() {
         {error && <ErrorBanner message={error} />}{saved && <div className="success-note"><Check size={16} /> Ajustes guardados.</div>}
         <div className="settings-actions"><button className="button button-dark" type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar cambios'} <Check size={17} /></button></div>
       </form>
-      <section className="settings-card channel-card"><div className="settings-card-heading"><div className="settings-card-icon"><Smartphone size={18} /></div><div><h2>Notificaciones</h2><p>Vinculá canales para enterarte más rápido.</p></div></div><div className="channel-row"><span className="channel-symbol telegram-symbol">✈</span><div><strong>Telegram</strong><p>{telegramChatId ? 'Este chat recibe avisos y permite responder.' : 'Vinculá el bot para recibir avisos y responder.'}</p></div>{telegramChatId ? <button className="channel-action" disabled={telegramBusy} onClick={() => void disconnectTelegram()}>{telegramBusy ? '…' : 'Desconectar'}</button> : <button className="channel-action" disabled={telegramBusy} onClick={() => void connectTelegram()}>{telegramBusy ? 'Preparando…' : 'Vincular'}</button>}</div>{telegramLink && <div className="telegram-link-note"><span>El enlace vence en 10 minutos. Abrilo y tocá <strong>Iniciar</strong> en Telegram.</span><a className="button button-quiet button-small" href={telegramLink} target="_blank" rel="noreferrer">Abrir Telegram <ExternalLink size={13} /></a></div>}<div className="channel-row"><span className="channel-symbol push-symbol"><Bell size={17} /></span><div><strong>Notificaciones web</strong><p>Los avisos push todavía no están disponibles.</p></div><span className="coming-soon">PRÓXIMAMENTE</span></div><InstallGuide /></section>
+      <section className="settings-card channel-card"><div className="settings-card-heading"><div className="settings-card-icon"><Smartphone size={18} /></div><div><h2>Notificaciones</h2><p>Vinculá canales para enterarte más rápido.</p></div></div><div className="channel-row"><span className="channel-symbol telegram-symbol">✈</span><div><strong>Telegram</strong><p>{telegramChatId ? 'Este chat recibe avisos y permite responder.' : 'Vinculá el bot para recibir avisos y responder.'}</p></div>{telegramChatId ? <button className="channel-action" disabled={telegramBusy} onClick={() => void disconnectTelegram()}>{telegramBusy ? '…' : 'Desconectar'}</button> : <button className="channel-action" disabled={telegramBusy} onClick={() => void connectTelegram()}>{telegramBusy ? 'Preparando…' : 'Vincular'}</button>}</div>{telegramLink && <div className="telegram-link-note"><span>El enlace vence en 10 minutos. Abrilo y tocá <strong>Iniciar</strong> en Telegram.</span><a className="button button-quiet button-small" href={telegramLink} target="_blank" rel="noreferrer">Abrir Telegram <ExternalLink size={13} /></a></div>}<div className="channel-row"><span className="channel-symbol push-symbol"><Bell size={17} /></span><div><strong>Notificaciones web</strong><p>{pushStatus === 'enabled' ? 'Este dispositivo recibirá avisos de tu timbre.' : pushStatus === 'denied' ? 'El navegador bloqueó los avisos. Permitilos desde los ajustes del sitio.' : pushStatus === 'unsupported' ? 'Usá un navegador compatible y, en iPhone, instalá Timbre en la pantalla de inicio.' : pushStatus === 'unconfigured' ? 'Las notificaciones web aún no están configuradas para este despliegue.' : 'Recibí avisos aunque no tengas abierto el panel.'}</p></div><button className="channel-action" disabled={pushBusy || pushStatus === 'loading' || pushStatus === 'unsupported' || pushStatus === 'unconfigured'} onClick={() => void toggleWebPush()}>{pushBusy ? '…' : pushStatus === 'enabled' ? 'Desactivar' : pushStatus === 'denied' ? 'Bloqueadas' : pushStatus === 'unsupported' ? 'No disponible' : pushStatus === 'unconfigured' ? 'No disponible' : 'Activar'}</button></div><InstallGuide /></section>
     </>}
   </div></ResidentLayout>
 }

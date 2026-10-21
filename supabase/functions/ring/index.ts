@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import webpush from 'npm:web-push@3.6.7'
 import { handleOptions, isAllowedOrigin, jsonResponse } from '../_shared/http.ts'
 import { hashSecret } from '../_shared/privacy.ts'
 
@@ -157,7 +158,13 @@ Deno.serve(async (request) => {
     .select('telegram_chat_id')
     .eq('id', door.owner_id)
     .maybeSingle()
+  const { data: pushSubscriptions, error: pushError } = await supabase
+    .from('push_subscriptions')
+    .select('endpoint, p256dh, auth')
+    .eq('profile_id', door.owner_id)
   const telegramToken = Deno.env.get('TELEGRAM_BOT_TOKEN')
+  const visitorLabel = cleanName || 'Alguien'
+  const quiet = door.dnd_enabled && isWithinQuietHours(door.dnd_start, door.dnd_end)
   let notificationSent = false
   if (profileError) {
     console.error('Ring event was created, but Telegram settings could not be loaded:', profileError.message)
@@ -169,8 +176,6 @@ Deno.serve(async (request) => {
       text: reply.slice(0, 60),
       callback_data: `answer:${eventId}:${index}`,
     }])
-    const visitorLabel = cleanName || 'Alguien'
-    const quiet = door.dnd_enabled && isWithinQuietHours(door.dnd_start, door.dnd_end)
     try {
       const telegramResponse = await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
         method: 'POST',
@@ -190,6 +195,53 @@ Deno.serve(async (request) => {
       }
     } catch (notificationError) {
       console.error('Telegram notification failed:', notificationError)
+    }
+  }
+
+  if (pushError) {
+    console.error('Ring event was created, but web push subscriptions could not be loaded:', pushError.message)
+  } else if (pushSubscriptions?.length) {
+    const vapidPublicKey = Deno.env.get('VAPID_PUBLIC_KEY')
+    const vapidPrivateKey = Deno.env.get('VAPID_PRIVATE_KEY')
+    const vapidSubject = Deno.env.get('VAPID_SUBJECT')
+    if (!vapidPublicKey || !vapidPrivateKey || !vapidSubject) {
+      console.error('Ring event was created, but VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT are not configured.')
+    } else {
+      webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey)
+      await Promise.all(pushSubscriptions.map(async (subscription) => {
+        try {
+          await webpush.sendNotification({
+            endpoint: subscription.endpoint,
+            keys: { p256dh: subscription.p256dh, auth: subscription.auth },
+          }, JSON.stringify({
+            title: `Timbre — ${visitorLabel} llegó`,
+            body: `${visitorLabel} (${body.reason}) · ${new Intl.DateTimeFormat('es-AR', {
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZone: 'America/Argentina/Buenos_Aires',
+            }).format(new Date())}`,
+            url: '/panel',
+            tag: `timbre-${eventId}`,
+            silent: quiet,
+          }), { TTL: 60 })
+          notificationSent = true
+        } catch (pushNotificationError) {
+          const statusCode = typeof pushNotificationError === 'object'
+            && pushNotificationError !== null
+            && 'statusCode' in pushNotificationError
+            ? pushNotificationError.statusCode
+            : undefined
+          console.error('Web push delivery failed:', statusCode ?? 'provider_error')
+          if (statusCode === 404 || statusCode === 410) {
+            const { error: removeError } = await supabase
+              .from('push_subscriptions')
+              .delete()
+              .eq('endpoint', subscription.endpoint)
+              .eq('profile_id', door.owner_id)
+            if (removeError) console.error('Could not remove expired web push subscription:', removeError.message)
+          }
+        }
+      }))
     }
   }
 
